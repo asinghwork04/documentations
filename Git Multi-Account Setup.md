@@ -1,62 +1,59 @@
-# Git Multi-Account Setup (Single Machine, Strict Isolation)
+# Git Multi-Account Setup (Work + Personal) — macOS (Strict Isolation)
 
-This guide sets up **two completely isolated Git identities** (e.g., work + personal) on the same machine using:
+A **deterministic, low-risk setup** to use multiple GitHub accounts on one machine with:
 
-* Folder-based Git config (identity isolation)
-* SSH key separation (authentication isolation)
+* Folder-based identity isolation (`includeIf`)
+* SSH key separation (auth isolation)
+* macOS Keychain + SSH agent (no repeated passphrase prompts)
 
 ---
 
 # 0. Goals
 
-* Same machine for multiple GitHub accounts
-* No accidental identity leakage
-* No manual switching required
-* No disruption to existing work setup
+* Same machine, multiple GitHub accounts
+* No identity leakage (email)
+* No auth leakage (wrong account push)
+* No manual switching
+* Reversible without side effects
 
 ---
 
 # 1. Prerequisites
-
-* Git installed
-* GitHub accounts (e.g., work + personal)
-* Terminal access
-* Basic familiarity with `cd`, `ls`
-
-Check:
 
 ```bash
 git --version
 ssh -V
 ```
 
+You need:
+
+* Git
+* OpenSSH (default on macOS)
+* Two GitHub accounts (work + personal)
+
 ---
 
-# 2. Folder Structure
-
-Create two root folders:
+# 2. Folder Structure (identity boundary)
 
 ```bash
 mkdir -p ~/Desktop/work
-mkdir -p ~/Desktop/personal
+mkdir -p ~/Desktop/aholic
 ```
-
-Example:
 
 ```
 ~/Desktop/
- ├── work/
- └── personal/
+ ├── work/      → work identity
+ └── aholic/    → personal identity
 ```
 
 ---
 
-# 3. Git Identity Setup (Conditional Config)
+# 3. Git Identity Setup (conditional config)
 
-## 3.1 Create personal config
+## 3.1 Personal config
 
 ```bash
-nano ~/.gitconfig-personal
+nano ~/.gitconfig-aholic
 ```
 
 ```ini
@@ -67,7 +64,7 @@ nano ~/.gitconfig-personal
 
 ---
 
-## 3.2 Create work config
+## 3.2 Work config
 
 ```bash
 nano ~/.gitconfig-work
@@ -81,7 +78,7 @@ nano ~/.gitconfig-work
 
 ---
 
-## 3.3 Update global config
+## 3.3 Global config (with includeIf)
 
 ```bash
 nano ~/.gitconfig
@@ -92,8 +89,8 @@ nano ~/.gitconfig
   name = Your Name
   email = your-work-email@company.com   # fallback
 
-[includeIf "gitdir:~/Desktop/personal/"]
-  path = ~/.gitconfig-personal
+[includeIf "gitdir:~/Desktop/aholic/"]
+  path = ~/.gitconfig-aholic
 
 [includeIf "gitdir:~/Desktop/work/"]
   path = ~/.gitconfig-work
@@ -104,21 +101,23 @@ nano ~/.gitconfig
 ## 3.4 Verify
 
 ```bash
-cd ~/Desktop/personal
-git config user.email   # expected: personal email
-
-cd ~/Desktop/work
-git config user.email   # expected: work email
+cd ~/Desktop/aholic && git config user.email
+cd ~/Desktop/work && git config user.email
 ```
+
+Expected:
+
+* `aholic` → personal email
+* `work` → work email
 
 ---
 
-# 4. SSH Setup (Authentication Isolation)
+# 4. SSH Setup (auth isolation)
 
-## 4.1 Generate personal SSH key
+## 4.1 Generate personal key
 
 ```bash
-ssh-keygen -t ed25519 -C "your-personal-email@example.com" -f ~/.ssh/id_ed25519_personal
+ssh-keygen -t ed25519 -C "your-personal-email@example.com" -f ~/.ssh/id_ed25519_aholic
 ```
 
 ---
@@ -130,15 +129,21 @@ nano ~/.ssh/config
 ```
 
 ```ini
-Host github-personal
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519_personal
+Host *
+  AddKeysToAgent yes
+  UseKeychain yes
 
 Host github-work
   HostName github.com
   User git
   IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host github-aholic
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_aholic
+  IdentitiesOnly yes
 ```
 
 ---
@@ -146,18 +151,32 @@ Host github-work
 ## 4.3 Add key to GitHub
 
 ```bash
-cat ~/.ssh/id_ed25519_personal.pub
+cat ~/.ssh/id_ed25519_aholic.pub
 ```
 
 * Copy output
-* GitHub → Settings → SSH Keys → Add
+* GitHub → Settings → SSH keys → Add
 
 ---
 
-## 4.4 Verify
+## 4.4 Load keys into Keychain (IMPORTANT)
 
 ```bash
-ssh -T git@github-personal
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519_aholic
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+```
+
+👉 This ensures:
+
+* passphrase asked once
+* then remembered securely
+
+---
+
+## 4.5 Verify SSH
+
+```bash
+ssh -T git@github-aholic
 ssh -T git@github-work
 ```
 
@@ -170,43 +189,37 @@ Hi <work-username>!
 
 ---
 
-# 5. Clone Rules
+# 5. Clone & Remote Rules
 
-## Personal repos (IMPORTANT)
+## 5.1 Personal repos (MANDATORY SSH)
 
 ```bash
-git clone git@github-personal:username/repo.git
+git clone git@github-aholic:username/repo.git
 ```
 
 ---
 
-## Work repos
+## 5.2 Work repos
 
 ```bash
 git clone https://github.com/org/repo.git
 ```
 
-(or later migrate to SSH)
+(optional later migrate to SSH)
 
 ---
 
-# 6. Convert Existing Repo to SSH
+## 5.3 Convert existing personal repo
 
 ```bash
-git remote set-url origin git@github-personal:username/repo.git
-```
-
-Verify:
-
-```bash
-git remote -v
+git remote set-url origin git@github-aholic:username/repo.git
 ```
 
 ---
 
-# 7. Verification Checklist
+# 6. Verification Checklist
 
-Inside any repo:
+Run inside repo:
 
 ```bash
 git config user.email
@@ -216,31 +229,31 @@ git remote -v
 
 ---
 
-## Expected
+### Expected
 
-### Personal repo
+**Personal repo**
 
 ```
 email → personal
-origin → github-personal
+origin → git@github-aholic:...
 ```
 
-### Work repo
+**Work repo**
 
 ```
 email → work
-origin → https or github-work
+origin → https://... OR github-work
 ```
 
 ---
 
-# 8. Safe Usage Rules
+# 7. Safe Usage Rules
 
-## MUST follow
+## MUST
 
 * Keep repos inside correct folders
 * Use SSH for personal repos
-* Do not mix folder structure
+* Verify remote before first push
 
 ---
 
@@ -251,7 +264,7 @@ git clone https://github.com/...   # for personal
 ```
 
 ```bash
-create repo outside ~/Desktop/work or personal
+create repo outside ~/Desktop/work or ~/Desktop/aholic
 ```
 
 ```bash
@@ -260,43 +273,52 @@ move repos randomly between folders
 
 ---
 
-# 9. Common Errors
+# 8. Edge Cases
 
-## ❌ Permission denied (publickey)
+### Repo outside folders
 
-Cause:
+→ fallback = work email
 
-* SSH key not added to GitHub
+---
 
-Fix:
+### Folder name mismatch
 
-```bash
-cat ~/.ssh/id_ed25519_personal.pub
+```
+~/Desktop/aholic2 → NOT matched
 ```
 
 ---
 
-## ❌ Wrong email in commits
+### Manual override
 
-Cause:
+```bash
+git config user.email something
+```
 
-* repo outside configured folder
-
-Fix:
-
-* move repo or check config
+→ overrides includeIf
 
 ---
 
-## ❌ not a git repository
+# 9. Credential Helper (macOS)
 
-Cause:
+Check:
 
-* folder missing `.git`
+```bash
+git config --show-origin --get credential.helper
+```
+
+Typical:
+
+```
+osxkeychain
+```
+
+* Used only for HTTPS
+* No conflict with SSH
 
 ---
 
-# 10. Optional: Migrate Work Repos to SSH
+# 10. Optional: migrate work repos to SSH
 
 ```bash
 git remote set-url origin git@github-work:org/repo.git
@@ -306,25 +328,25 @@ git remote set-url origin git@github-work:org/repo.git
 
 # 11. Cleanup / Dismantle
 
-## Remove SSH setup
+## Remove SSH
 
 ```bash
-rm -f ~/.ssh/id_ed25519_personal*
+rm -f ~/.ssh/id_ed25519_aholic*
 rm -f ~/.ssh/config
 ```
 
 ---
 
-## Remove conditional configs
+## Remove Git configs
 
 ```bash
-rm -f ~/.gitconfig-personal ~/.gitconfig-work
-nano ~/.gitconfig   # remove includeIf sections
+rm -f ~/.gitconfig-aholic ~/.gitconfig-work
+nano ~/.gitconfig   # remove includeIf
 ```
 
 ---
 
-## Reset global identity
+## Reset identity
 
 ```bash
 git config --global --unset user.name
@@ -342,16 +364,7 @@ SSH alias → controls account (auth)
 
 ---
 
-# 13. Final Outcome
-
-* No manual switching
-* No identity leakage
-* Full separation of work & personal
-* Safe, scalable, reversible setup
-
----
-
-# 14. Quick Sanity Command
+# 13. Quick sanity check
 
 ```bash
 git config user.email && git remote -v
@@ -359,12 +372,13 @@ git config user.email && git remote -v
 
 ---
 
-# 15. Future Improvements
+# 14. Final State
 
-* Convert all repos to SSH
-* Add signing (GPG)
-* Use separate GitHub profiles in browser
-* Use direnv for environment isolation
+* Identity isolation ✔
+* SSH isolation ✔
+* No repeated passphrase ✔
+* No manual switching ✔
+* Reversible ✔
 
 ---
 
